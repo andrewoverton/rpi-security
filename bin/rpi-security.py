@@ -68,12 +68,21 @@ def parse_config_file(config_file):
         'packet_timeout': '700',
         'debug_mode': 'False',
         'pir_pin': '14',
+        'cam_vflip': 'True',
+        'cam_v_res': '1944',
+        'cam_h_res': '2592',
+        'capture_mode': 'video',
+        'capture_length': '5'
     }
     cfg = SafeConfigParser(defaults=default_config)
     cfg.read(config_file)
     dict_config = dict(cfg.items('main'))
     dict_config['debug_mode'] = str2bool(dict_config['debug_mode'])
+    dict_config['cam_vflip'] = str2bool(dict_config['cam_vflip'])
     dict_config['pir_pin'] = int(dict_config['pir_pin'])
+    dict_config['cam_v_res'] = int(dict_config['cam_v_res'])
+    dict_config['cam_h_res'] = int(dict_config['cam_h_res'])
+    dict_config['capture_length'] = int(dict_config['capture_length'])
     dict_config['packet_timeout'] = int(dict_config['packet_timeout'])
     if ',' in dict_config['mac_addresses']:
         dict_config['mac_addresses'] = dict_config['mac_addresses'].lower().split(',')
@@ -115,6 +124,25 @@ def take_photo(output_file):
     try:
         camera.capture(output_file)
         logger.info("Captured image: %s" % output_file)
+    except Exception as e:
+        logger.error('Failed to take photo: %s' % e)
+        return False
+    else:
+        return True
+
+def take_video(output_file, length):
+    """
+    Captures a video and saves it disk.
+    """
+    if args.debug:
+        GPIO.output(32, True)
+        time.sleep(0.25)
+        GPIO.output(32, False)
+    try:
+        camera.start_recording(output_file)
+        camera.wait_recording(length)
+        camera.stop_recording()
+        logger.info("Captured video: %s" % output_file)
     except Exception as e:
         logger.error('Failed to take photo: %s' % e)
         return False
@@ -181,28 +209,28 @@ def arp_ping_macs(mac_addresses, repeat=1):
 
 def process_photos():
     """
-    Monitors the captured_photos list for newly captured photos.
+    Monitors the captured_from_camera list for newly captured photos.
     When a new photos are present it will run arp_ping_macs to remove false positives and then send the photos via Telegram.
     After successfully sendind the photo it will also archive the photo and remove it from the list.
     """
     logger.info("thread running")
     while True:
-        if len(captured_photos) > 0:
+        if len(captured_from_camera) > 0:
             if alarm_state['current_state'] == 'armed':
                 arp_ping_macs(mac_addresses=config['mac_addresses'], repeat=3)
-                for photo in list(captured_photos):
+                for photo in list(captured_from_camera):
                     if alarm_state['current_state'] != 'armed':
                         break
                     logger.debug('Processing the photo: %s' % photo)
                     alarm_state['alarm_triggered'] = True
                     if telegram_send_photo(photo):
                         archive_photo(photo)
-                        captured_photos.remove(photo)
+                        captured_from_camera.remove(photo)
             else:
                 logger.debug('Stopping photo processing as state is now %s' % alarm_state['current_state'])
-                for photo in list(captured_photos):
+                for photo in list(captured_from_camera):
                     logger.info('Removing photo as it is a false positive: %s' % photo)
-                    captured_photos.remove(photo)
+                    captured_from_camera.remove(photo)
                     # Delete the photo file
         time.sleep(5)
 
@@ -325,10 +353,15 @@ def motion_detected(channel):
     if current_state == 'armed':
         logger.info('Motion detected')
         file_prefix = config['image_path'] + "/rpi-security-" + datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        for i in range(0, 5, 1):
-            camera_output_file = "%s-%s.jpeg" % (file_prefix, i)
-            take_photo(camera_output_file)
-            captured_photos.append(camera_output_file)
+        if confg['capture_mode'] == 'video':
+            camera_output_file = "%s.h264" % file_prefix
+            take_video(camera_output_file, confg['capture_length'])
+            captured_from_camera.append(camera_output_file)
+        else:
+            for i in range(0, confg['capture_length'], 1):
+                camera_output_file = "%s-%s.jpeg" % (file_prefix, i)
+                take_photo(camera_output_file)
+                captured_from_camera.append(camera_output_file)
     else:
         logger.debug('Motion detected but current_state is: %s' % current_state)
 
@@ -386,7 +419,7 @@ if __name__ == "__main__":
     logger = setup_logging(debug_mode=config['debug_mode'], log_to_stdout=args.debug)
     state = read_state_file(args.state_file)
     sys.excepthook = exception_handler
-    captured_photos = []
+    captured_from_camera = []
     # Some intial checks before proceeding
     if check_monitor_mode(config['network_interface']):
         config['network_interface_mac'] = get_interface_mac_addr(config['network_interface'])
@@ -410,8 +443,8 @@ if __name__ == "__main__":
     GPIO.setup(32, GPIO.OUT, initial=False)
     try:
         camera = picamera.PiCamera()
-        camera.resolution = (2592, 1944)
-        camera.vflip = True
+        camera.resolution = (config['cam_h_res'], config['cam_v_res'])
+        camera.vflip = config['cam_vflip']
         camera.led = False
     except Exception as e:
         exit_error('Camera module failed to intialise with error %s' % e)
