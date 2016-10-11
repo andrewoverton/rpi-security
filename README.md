@@ -28,7 +28,7 @@ You will need this hardware:
   - An enclosure of some sort. Details of the hardware I made is [here](hardware).
 
 Other requirements:
-  - A [Telegram bot](https://telegram.org/). It's free and easy to setup.
+  - A [Telegram bot](https://telegram.org/blog/bot-revolution). It's free and easy to setup.
   - Raspbian distribution installed. I used Jessie lite. You could possibly use a different OS but I haven't tried it.
   - Python 2.7.
 
@@ -50,7 +50,7 @@ The application resets a counter when packets are detected and if the counter go
 
 ### Notifications
 
-A [Telegram](https://telegram.org/) bot is used to send notifications with the captured images. They have good mobile applications and a nice API. You can also view the messages in a browser and messages are synced across devices.
+A [Telegram](https://telegram.org/blog/bot-revolution) bot is used to send notifications with the captured images. They have good mobile applications and a nice API. You can also view the messages in a browser and messages are synced across devices.
 
 If the system is in an armed state and motion is detected then a message with the captured image is sent to you from the Telegram bot.
 
