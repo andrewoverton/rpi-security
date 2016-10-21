@@ -63,26 +63,28 @@ def parse_config_file(config_file):
     def str2bool(v):
         return v.lower() in ("yes", "true", "t", "1")
     default_config = {
-        'image_path': '/var/tmp',
+        'camera_save_path': '/var/tmp',
         'network_interface': 'mon0',
         'packet_timeout': '700',
         'debug_mode': 'False',
         'pir_pin': '14',
-        'cam_vflip': 'True',
-        'cam_v_res': '1944',
-        'cam_h_res': '2592',
-        'capture_mode': 'video',
-        'capture_length': '5'
+        'camera_vflip': 'False',
+        'camera_hflip': 'False',
+        'camera_v_res': '1944',
+        'camera_h_res': '2592',
+        'camera_mode': 'video',
+        'camera_capture_length': '3'
     }
     cfg = SafeConfigParser(defaults=default_config)
     cfg.read(config_file)
     dict_config = dict(cfg.items('main'))
     dict_config['debug_mode'] = str2bool(dict_config['debug_mode'])
-    dict_config['cam_vflip'] = str2bool(dict_config['cam_vflip'])
+    dict_config['camera_vflip'] = str2bool(dict_config['camera_vflip'])
+    dict_config['camera_hflip'] = str2bool(dict_config['camera_hflip'])
     dict_config['pir_pin'] = int(dict_config['pir_pin'])
-    dict_config['cam_v_res'] = int(dict_config['cam_v_res'])
-    dict_config['cam_h_res'] = int(dict_config['cam_h_res'])
-    dict_config['capture_length'] = int(dict_config['capture_length'])
+    dict_config['camera_v_res'] = int(dict_config['camera_v_res'])
+    dict_config['camera_h_res'] = int(dict_config['camera_h_res'])
+    dict_config['camera_capture_length'] = int(dict_config['camera_capture_length'])
     dict_config['packet_timeout'] = int(dict_config['packet_timeout'])
     if ',' in dict_config['mac_addresses']:
         dict_config['mac_addresses'] = dict_config['mac_addresses'].lower().split(',')
@@ -139,7 +141,7 @@ def take_video(output_file, length):
         time.sleep(0.25)
         GPIO.output(32, False)
     try:
-        camera.start_recording(output_file)
+        camera.start_recording(output_file, format='h264')
         camera.wait_recording(length)
         camera.stop_recording()
         logger.info("Captured video: %s" % output_file)
@@ -166,14 +168,19 @@ def telegram_send_message(message):
         logger.info('Telegram message Sent: "%s"' % message)
         return True
 
-def telegram_send_photo(file_path):
+def telegram_send_file(file_path):
     if 'telegram_chat_id' not in state:
         logger.error('Telegram failed to send file %s because Telegram chat_id is not set. Send a message to the Telegram bot' % file_path)
         return False
+    filename, file_extension = os.path.splitext(file_path)
     try:
-        bot.sendPhoto(chat_id=state['telegram_chat_id'], photo=open(file_path, 'rb'), timeout=10)
+        if file_extension == '.mp4':
+            bot.sendVideo(chat_id=state['telegram_chat_id'], video=open(file_path, 'rb'), timeout=30)
+        else:
+            bot.sendPhoto(chat_id=state['telegram_chat_id'], photo=open(file_path, 'rb'), timeout=10)
     except Exception as e:
         logger.error('Telegram failed to send file %s with exception: %s' % (file_path, e))
+        return False
     else:
         logger.info('Telegram file sent: %s' % file_path)
         return True
@@ -223,7 +230,7 @@ def process_photos():
                         break
                     logger.debug('Processing the photo: %s' % photo)
                     alarm_state['alarm_triggered'] = True
-                    if telegram_send_photo(photo):
+                    if telegram_send_file(photo):
                         archive_photo(photo)
                         captured_from_camera.remove(photo)
             else:
@@ -317,7 +324,7 @@ def telegram_bot(token):
             return True
     def help(bot, update):
         if check_chat_id(update):
-            bot.sendMessage(update.message.chat_id, parse_mode='Markdown', text='/status: Request status\n/disable: Disable alarm\n/enable: Enable alarm\n/photo: Take a photo\n', timeout=10)
+            bot.sendMessage(update.message.chat_id, parse_mode='Markdown', text='/status: Request status\n/disable: Disable alarm\n/enable: Enable alarm\n/photo: Take a photo\n/video: Take a video\n', timeout=10)
     def status(bot, update):
         if check_chat_id(update):
             bot.sendMessage(update.message.chat_id, parse_mode='Markdown', text=prepare_status(alarm_state), timeout=10)
@@ -329,8 +336,14 @@ def telegram_bot(token):
             update_alarm_state('disarmed')
     def photo(bot, update):
         if check_chat_id(update):
-            take_photo('/var/tmp/rpi-sec-photo-tmp.jpeg')
-            bot.sendPhoto(update.message.chat_id, photo=open('/var/tmp/rpi-sec-photo-tmp.jpeg', 'rb'), timeout=30)
+            file_path = config['camera_save_path'] + "/rpi-security-" + datetime.now().strftime("%Y-%m-%d-%H%M%S") + '.jpeg'
+            take_photo(file_path)
+            telegram_send_file(file_path)
+    def video(bot, update):
+        if check_chat_id(update):
+            file_path = config['camera_save_path'] + "/rpi-security-" + datetime.now().strftime("%Y-%m-%d-%H%M%S") + '.mp4'
+            take_video(file_path, config['camera_capture_length'])
+            telegram_send_file(file_path)
     def error(bot, update, error):
         logger.error('Update "%s" caused error "%s"' % (update, error))
     updater = Updater(token)
@@ -341,6 +354,7 @@ def telegram_bot(token):
     dp.add_handler(CommandHandler("disable", disable))
     dp.add_handler(CommandHandler("enable", enable))
     dp.add_handler(CommandHandler("photo", photo))
+    dp.add_handler(CommandHandler("video", video))
     dp.add_error_handler(error)
     logger.info("thread running")
     updater.start_polling(timeout=10)
@@ -352,13 +366,13 @@ def motion_detected(channel):
     current_state = alarm_state['current_state']
     if current_state == 'armed':
         logger.info('Motion detected')
-        file_prefix = config['image_path'] + "/rpi-security-" + datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        if confg['capture_mode'] == 'video':
-            camera_output_file = "%s.h264" % file_prefix
-            take_video(camera_output_file, confg['capture_length'])
+        file_prefix = config['camera_save_path'] + "/rpi-security-" + datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        if config['camera_mode'] == 'video':
+            camera_output_file = "%s.mp4" % file_prefix
+            take_video(camera_output_file, config['camera_capture_length'])
             captured_from_camera.append(camera_output_file)
         else:
-            for i in range(0, confg['capture_length'], 1):
+            for i in range(0, config['camera_capture_length'], 1):
                 camera_output_file = "%s-%s.jpeg" % (file_prefix, i)
                 take_photo(camera_output_file)
                 captured_from_camera.append(camera_output_file)
@@ -443,8 +457,8 @@ if __name__ == "__main__":
     GPIO.setup(32, GPIO.OUT, initial=False)
     try:
         camera = picamera.PiCamera()
-        camera.resolution = (config['cam_h_res'], config['cam_v_res'])
-        camera.vflip = config['cam_vflip']
+        camera.resolution = (config['camera_h_res'], config['camera_v_res'])
+        camera.vflip = config['camera_vflip']
         camera.led = False
     except Exception as e:
         exit_error('Camera module failed to intialise with error %s' % e)
