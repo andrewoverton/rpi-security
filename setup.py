@@ -23,7 +23,7 @@ setup(
         'requests[security]',
         'netifaces',
         'pyyaml',
-        'PIL'
+        'Pillow>=3.4.0'
     ],
     classifiers=[
     'Environment :: Console',

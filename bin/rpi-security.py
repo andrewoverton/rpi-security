@@ -177,10 +177,12 @@ def telegram_send_file(file_path):
     try:
         if file_extension == '.mp4':
             bot.sendVideo(chat_id=state['telegram_chat_id'], video=open(file_path, 'rb'), timeout=30)
-        if file_extension == '.gif':
+        elif file_extension == '.gif':
             bot.sendDocument(chat_id=state['telegram_chat_id'], document=open(file_path, 'rb'), timeout=30)
-        else:
+        elif file_extension == '.jpeg':
             bot.sendPhoto(chat_id=state['telegram_chat_id'], photo=open(file_path, 'rb'), timeout=10)
+        else:
+            logger.error('Uknown file not sent: %s' % file_path)
     except Exception as e:
         logger.error('Telegram failed to send file %s with exception: %s' % (file_path, e))
         return False
@@ -382,6 +384,8 @@ def motion_detected(channel):
                 camera_output_file = "%s-%s.jpeg" % (file_prefix, i)
                 take_photo(camera_output_file)
                 captured_from_camera.append(camera_output_file)
+        else:
+            logger.error("Unkown camera_mode %s" % config['camera_mode'])
     else:
         logger.debug('Motion detected but current_state is: %s' % current_state)
 
