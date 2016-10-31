@@ -66,6 +66,7 @@ You can send the Telegram bot commands that trigger certain actions.
   - */enable*: Enables the service after it being disabled.
   - */status*: Sends a status report.
   - */photo*: Captures and sends a photo.
+  - */gif*: Captures and sends a gif.
 
 ![rpi-security 4](../master/images/rpi-security-status-message.png?raw=true)
 
@@ -113,7 +114,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable rpi-security.service
 ```
 
-Add your MAC address or addresses and Telegram bot API key to ``/etc/rpi-security.conf``.
+Add your MAC address or addresses, Telegram bot API key and any other changes to ``/etc/rpi-security.conf``.
 
 Ensure you have enabled the camera module using ``raspi-config``.
 

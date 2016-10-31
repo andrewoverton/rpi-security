@@ -4,9 +4,9 @@ Add more debug for bot stuff
 
 Add a udev rule for monitor interface instead of having it in the systemd service file?
 
-Implement some form of LED indicator where a colour shows the alarm state.
+Implement some form of visual indicator to show the alarm state.
 
-Automatically clean up old photos
+Automatically delete old photos
 
 Implement an archive feature. Eg copy to S3 or FTP.
 
