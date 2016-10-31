@@ -104,6 +104,7 @@ Install current master of scapy as the current release is missing a required bug
 
 ```
 sudo pip install https://github.com/secdev/scapy/zipball/master
+sudo pip --no-cache-dir install 'Pillow>=3.4.0'
 ```
 
 Install rpi-security, reload systemd configuration and enable the service:
