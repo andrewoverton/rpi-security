@@ -19,46 +19,6 @@ def parse_arguments():
     p.add_argument('-d', '--debug', help='To enable debug output to stdout', action='store_true', default=False)
     return p.parse_args()
 
-def check_monitor_mode(network_interface):
-    """
-    Returns True if an interface is in monitor mode
-    """
-    result = False
-    try:
-        type_file = open('/sys/class/net/%s/type' % network_interface, 'r')
-        operstate_file = open('/sys/class/net/%s/operstate' % network_interface, 'r')
-    except:
-        pass
-    else:
-        if type_file.read().startswith('80') and not operstate_file.read().startswith('down'):
-            result = True
-    return result
-
-def get_network_address(interface_name):
-    """
-    Calculates the network address of an interface. This is used in ARP scanning.
-    """
-    from netaddr import IPNetwork
-    from netifaces import ifaddresses
-    interface_details = ifaddresses(interface_name)
-    my_network = IPNetwork('%s/%s' % (interface_details[2][0]['addr'], interface_details[2][0]['netmask']))
-    network_address = my_network.cidr
-    logger.debug('Calculated network: %s' % network_address)
-    return str(network_address)
-
-def get_interface_mac_addr(network_interface):
-    """
-    Returns the MAC address of an interface
-    """
-    result = False
-    try:
-        f = open('/sys/class/net/%s/address' % network_interface, 'r')
-    except:
-        pass
-    else:
-        result = f.read().strip()
-    return result
-
 def parse_config_file(config_file):
     def str2bool(v):
         return v.lower() in ("yes", "true", "t", "1")
@@ -191,35 +151,6 @@ def telegram_send_file(file_path):
         logger.info('Telegram file sent: %s' % file_path)
         return True
 
-def arp_ping_macs(mac_addresses, address, repeat=1):
-    """
-    Performs an ARP scan of a destination MAC address to try and determine if they are present on the network.
-    """
-    def _arp_ping(mac_address, ip_address):
-        result = False
-        answered,unanswered = srp(Ether(dst=mac_address)/ARP(pdst=ip_address), timeout=1, verbose=False)
-        if len(answered) > 0:
-            for reply in answered:
-                if reply[1].hwsrc == mac_address:
-                    if type(result) is not list:
-                        result = []
-                    result.append(str(reply[1].psrc))
-                    result = ', '.join(result)
-        return result
-    while repeat > 0:
-        if time.time() - alarm_state['last_packet'] < 30:
-            break
-        for mac_address in mac_addresses:
-            result = _arp_ping(mac_address, address)
-            if result:
-                logger.debug('MAC %s responded to ARP ping with address %s' % (mac_address, result))
-                break
-            else:
-                logger.debug('MAC %s did not respond to ARP ping' % mac_address)
-        if repeat > 1:
-            time.sleep(2)
-        repeat -= 1
-
 def process_photos(network_address, mac_addresses):
     """
     Monitors the captured_from_camera list for newly captured photos.
@@ -230,7 +161,6 @@ def process_photos(network_address, mac_addresses):
     while True:
         if len(captured_from_camera) > 0:
             if alarm_state['current_state'] == 'armed':
-                arp_ping_macs(mac_addresses, network_address, repeat=3)
                 for photo in list(captured_from_camera):
                     if alarm_state['current_state'] != 'armed':
                         break
@@ -247,28 +177,6 @@ def process_photos(network_address, mac_addresses):
                     # Delete the photo file
         time.sleep(5)
 
-def capture_packets(network_interface, network_interface_mac, mac_addresses):
-    """
-    This function uses scapy to sniff packets for our MAC addresses and updates a counter when packets are detected.
-    """
-    logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
-    from scapy.all import sniff
-    def update_time(packet):
-        for mac_address in mac_addresses:
-            if mac_address in packet[0].addr2 or mac_address in packet[0].addr3:
-                alarm_state['last_packet_mac'] = mac_address
-                break
-        alarm_state['last_packet'] = time.time()
-        logger.debug('Packet detected from %s' % str(alarm_state['last_packet_mac']))
-    def calculate_filter(mac_addresses):
-        mac_string = ' or '.join(mac_addresses)
-        return '((wlan addr2 (%(mac_string)s) or wlan addr3 (%(mac_string)s)) and type mgt subtype probe-req) or (wlan addr1 %(network_interface_mac)s and wlan addr3 (%(mac_string)s))' % { 'mac_string' : mac_string, 'network_interface_mac' : network_interface_mac }
-    while True:
-        logger.info("thread running")
-        try:
-            sniff(iface=network_interface, store=0, prn=update_time, filter=calculate_filter(mac_addresses))
-        except Exception as e:
-            exit_error('Scapy failed to sniff with error %s. Please check help or update scapy version' % e)
 
 def update_alarm_state(new_alarm_state):
     if new_alarm_state != alarm_state['current_state']:
@@ -290,7 +198,7 @@ def monitor_alarm_state(packet_timeout, network_address, mac_addresses):
             if now - alarm_state['last_packet'] > packet_timeout + 20:
                 update_alarm_state('armed')
             elif now - alarm_state['last_packet'] > packet_timeout:
-                arp_ping_macs(mac_addresses, network_address)
+                break
             else:
                 update_alarm_state('disarmed')
 
@@ -446,12 +354,6 @@ if __name__ == "__main__":
     sys.excepthook = exception_handler
     captured_from_camera = []
     # Some intial checks before proceeding
-    if check_monitor_mode(config['network_interface']):
-        config['network_interface_mac'] = get_interface_mac_addr(config['network_interface'])
-        # Hard coded interface name here. Need a better solution...
-        config['network_address'] = get_network_address('wlan0')
-    else:
-        exit_error('Interface %s does not exist, is not in monitor mode, is not up or MAC address unknown.' % config['network_interface'])
     if not os.geteuid() == 0:
         exit_error('%s must be run as root' % sys.argv[0])
     # Now begin importing slow modules and setting up camera, Telegram and threads
@@ -495,9 +397,6 @@ if __name__ == "__main__":
     monitor_alarm_state_thread = Thread(name='monitor_alarm_state', target=monitor_alarm_state, kwargs={'packet_timeout': config['packet_timeout'], 'network_address': config['network_address'], 'mac_addresses': config['mac_addresses']})
     monitor_alarm_state_thread.daemon = True
     monitor_alarm_state_thread.start()
-    capture_packets_thread = Thread(name='capture_packets', target=capture_packets, kwargs={'network_interface': config['network_interface'], 'network_interface_mac': config['network_interface_mac'], 'mac_addresses': config['mac_addresses']})
-    capture_packets_thread.daemon = True
-    capture_packets_thread.start()
     process_photos_thread = Thread(name='process_photos', target=process_photos, kwargs={'network_address': config['network_address'], 'mac_addresses': config['mac_addresses']})
     process_photos_thread.daemon = True
     process_photos_thread.start()
